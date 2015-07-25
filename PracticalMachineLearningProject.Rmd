@@ -1,0 +1,282 @@
+---
+title: "Examining HAR Data for Workout Quality"
+author: "Craig Ching"
+date: "`r Sys.Date()`"
+output: html_document
+#output: rmarkdown::html_vignette
+#vignette: >
+#  %\VignetteIndexEntry{Vignette Title}
+#  %\VignetteEngine{knitr::rmarkdown}
+#  %\VignetteEncoding{UTF-8}
+---
+
+```{r init, echo=FALSE, results='hide', message=FALSE}
+library(caret)
+library(randomForest)
+library(gbm)
+library(dplyr)
+library(ggplot2)
+```
+
+## Executive Summary
+
+We were asked to use the data from the study "Qualitative Activity Recognition of Weight Lifting Exercises" (http://groupware.les.inf.puc-rio.br/har) to reproduce the section from that paper that uses a classification machine learning algorithm to predict the type of mistakes a person might make when performing weight lifting exercises.  The paper concludes that, "even though our results point out that it is possible to detect mistakes by classification, this approach is hardly scalable."
+
+Nevertheless, we will use the data they collected to reproduce some of their results.  In this analysis we show that it is possible to accurately classify the quality of a weight lifting exercise.
+
+## Introduction
+
+This study undertakes a lesser studied aspect of physical activity, the study of whether a participant is performing an activity in a correct and/or an efficient manner.  The study had users perform a set of weight lifting activities correctly and then by performing the activities in a manner incorporating common mistakes.  Sensors were placed on users while performing the activities and activities were supervised by an experienced weight lifter to ensure the activities were carried out correctly.  The activities were:
+
+- (Class A) exactly according to the specification
+- (Class B) throwing the elbows to the front
+- (Class C) lifting the dumbbell only halfway
+- (Class D) lowering the dumbbell only halfway
+- (Class E) throwing the hips to the front
+
+The exercises were performed by six males between the ages of 20 and 28 years old.  The goal of this analysis is to use the data provided by the study to predict 20 outcomes for which we do not know the *classe* (A, B, C, D, or E).  The data for each *classe* value are distributed fairly uniformly as can be seen in Figure **TODO: FIGURE**, giving us confidence that we have enough data for each *classe* to ensure we at least won't have any bias due to not having enough data for a *classe* value.
+
+```{r get, echo=FALSE, results='hide', message=FALSE}
+download <- function(name) {
+
+    prefix <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-"
+    url <- paste(prefix, name, ".csv", sep = "")
+    destfile <- paste(name, ".csv", sep = "")
+
+    if (! file.exists(destfile)) {
+        download.file(url, destfile = destfile, method = "curl")
+    }
+}
+
+setwd("/Users/cching/Coursera/Practical Machine Learning/project/")
+
+lapply(c("training", "testing"), download)
+
+trainRaw <- read.csv("training.csv", na.strings = c("NA", ""), stringsAsFactors = FALSE)
+
+df.summary <-
+    group_by(trainRaw, classe) %>%
+    summarize(counts = n())
+
+ncases <- nrow(trainRaw)
+nfeatures <- ncol(trainRaw)
+
+# Summarize the counts of non-NA values in each column.  We use
+# this to justify removing columns for which there are no valid
+# values (all NA)
+counts <- apply(trainRaw, 2, function(x) length(which(!is.na(x))))
+df.counts <- as.data.frame(table(counts))
+
+```
+
+```{r barplot, echo=FALSE, fig.width=6, fig.height=4, fig.cap="Figure 1. Counts for classe"}
+ggplot(data = df.summary, aes(x = classe, y = counts)) +
+    geom_bar(stat = "identity", color = "black", fill = "steelblue")
+```
+
+Figure 1. "Counts for *classe*"
+
+## Feature Engineering
+
+The raw data consists of `r nfeatures` features and `r ncases` cases.  We note that the data frame is fairly sparse with `r df.counts[1,2]` features containing only `r df.counts[1,1]` values of `r ncases` cases.  We remove these features as their numbers are a small percentage of the overall cases and, as we will see, our predictive power is good without them.  We also remove some time-based features as well as the user name and the identity column as they shouldn't have any predictive value for a classification problem.  Our cleaning code can be reviewed in Figure **TODO: Provide this figure**
+
+```{r clean, echo=FALSE, results='hide', message=FALSE}
+clean <- function(data, include = TRUE) {
+
+    # Now remove those columns that have no valid values, leaving
+    # only columns that have every row with a value
+    df <- data[,colSums(!is.na(data))==nrow(data)]
+
+    # The following are not relevant to the analysis and don't
+    # make any sense as predictors
+    df$X <- NULL
+    df$user_name <- NULL
+    df$raw_timestamp_part_1 <- NULL
+    df$raw_timestamp_part_2 <- NULL
+    df$cvtd_timestamp <- NULL
+    df$new_window <- NULL
+    df$num_window <- NULL
+    if (include) {
+        df$classe <- as.factor(df$classe)
+    }
+    df
+}
+
+# Summarize the counts of non-NA values in each column.  We use
+# this to justify removing columns for which there are no valid
+# values (all NA)
+counts <- apply(trainRaw, 2, function(x) length(which(!is.na(x))))
+nrow(trainRaw)
+table(counts)
+
+trainRaw <- clean(trainRaw)
+
+```
+
+## Model Selection
+
+We have narrowed our features down to `r ncol(trainRaw)` relevant features.  Our strategy for model selection is to split our training data into two sets, 70% for training our model and the other 30% for testing and reporting our expected out of sample error.  Finally we will apply our model to the validation set provided by download from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv which will be submitted for evaluation of our final model.
+
+We will create two different machine learning algorithms, one based on random forests and the other based on boosting trees, and train them on the training set using 3-fold cross validation.  We will measure the accuracy and error for each algorithm using the held out test and compare the two resulting models.
+
+```{r partition, echo=FALSE, results='hide', message=FALSE}
+getTrainTest <- function(data, shouldSamp = FALSE) {
+
+    d <- data
+
+    if (shouldSamp) {
+        d <- data[sample(nrow(data), size = 1500), ]
+    }
+
+    inTrain <- createDataPartition(y = data$classe, p = 0.7, list = FALSE)
+
+    newTrain <- data[inTrain, ]
+    newTest  <- data[-inTrain, ]
+
+    list(train = newTrain, test = newTest)
+}
+
+set.seed(88888888)
+l <- getTrainTest(trainRaw)
+train <- l$train
+test <- l$test
+
+```
+
+```{r results, echo=FALSE}
+# ```{r results, echo=FALSE, results='hide', message=FALSE}
+
+analyzeModel <- function(model, test) {
+
+    test.pred <- predict(model, newdata = test)
+
+    # cm <- confusionMatrix(test$class, pred)
+
+    testFinal <- read.csv("testing.csv", na.strings = c("NA", ""), stringsAsFactors = FALSE)
+    testFinal <- clean(testFinal, FALSE)
+
+    final.pred <- predict(model, newdata = testFinal)
+
+    list(test.pred = test.pred, final.pred = final.pred)
+}
+```
+
+#### Random Forest Performance
+
+For the random forest model, we use the caret package to train using "rf" for the method.  How we built the model can be seen in Figure **TODO: Provide figure**
+
+```{r rf, echo=FALSE, results='hide', message=FALSE}
+getRandomForestModel <- function(data) {
+
+    if (file.exists("rf1")) {
+        mod <- readRDS("rf1")
+    } else {
+        trControl <- trainControl(method = "cv", number = 3)
+
+        ptm <- proc.time()
+        mod <- train(classe ~ ., method = "rf", data = data, trControl = trControl, do.trace = FALSE, ntree = 500)
+        t1 <- proc.time() - ptm
+
+        print(t1)
+        
+        saveRDS(mod, file = "rf1")
+    }
+
+    mod
+}
+
+set.seed(88888888)
+
+rf.model <- getRandomForestModel(train)
+plot(rf.model$finalModel)
+
+l <- analyzeModel(rf.model, test)
+
+rf.pred <- l$test.pred
+rf.final.pred <- l$final.pred
+
+rf.accuracy <- round(postResample(test$classe, rf.pred)[[1]], 3) * 100
+rf.error <- 100 - rf.accuracy
+
+```
+
+The random forest model we built has an accuracy of `r rf.accuracy`% and an out-of-sample error of `r rf.error`%.  The accuracy and out-of-sample error were calculated on the held out test set.  This model has a very high accuracy and should perform well on our validation set for submission.  The confusion matrix for our random forest model generated on the test data set:
+
+```{r echo=FALSE}
+
+confusionMatrix(test$classe, rf.pred)
+
+```
+
+#### Tree Boosting Performance
+
+```{r boosting, echo=FALSE, results='hide', message=FALSE}
+
+getBoostingModel <- function(data) {
+
+    # Worth checking this out:
+    # https://www.kaggle.com/c/forest-cover-type-prediction/forums/t/10562/caret-gbm-cross-validation-takes-an-extremely-long-time-to-complete
+
+    if (file.exists("gbm1")) {
+        mod <- readRDS("gbm1")
+    } else {
+        ptm <- proc.time()
+        myTuneGrid <- expand.grid(n.trees = seq(1,501,10), interaction.depth = 2:5,shrinkage = 0.1, n.minobsinnode = 10)
+        fitControl <- trainControl(method = "repeatedcv", number = 3, repeats = 1, verboseIter = FALSE,returnResamp = "all")
+        mod <- train(classe ~ .,data = data,method = "gbm",trControl = fitControl,tuneGrid = myTuneGrid)
+        # mod <- train(classe ~ ., method = "gbm", data = data, verbose = FALSE)
+        t1 <- proc.time() - ptm
+
+        print(t1)
+        
+        saveRDS(mod, file = "gbm1")
+    }
+    mod
+}
+
+set.seed(88888888)
+
+gbm.model <- getBoostingModel(train)
+plot(gbm.model)
+l <- analyzeModel(gbm.model, test)
+
+gbm.pred <- l$test.pred
+gbm.final.pred <- l$final.pred
+
+```
+
+```{r submission, echo=FALSE, results='hide', message=FALSE}
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+
+pml_write_files(rf.final.pred)
+
+```
+
+## Final Model
+
+```{r echo=FALSE}
+model.matches <- sum(rf.final.pred == gbm.final.pred)
+```
+
+Comparing the two models, we find that the models agree with the final validation set `r model.matches` times, they are in complete agreement with each other.  The final predicted values that we submitted are:
+
+```{r echo=FALSE}
+print(rf.final.pred)
+```
+
+For our final model, we chose the random forest because it was slightly better than the boosting trees algorithm and it was faster to generate.  Both were equally predictive and either could have been chosen.
+
+## Conclusion
+
+Given the methodology of the experiment, that weight trainers supervised participants while performing the exercises, it is perhaps not surprising that our data provides very strong predictors allowing our predictive models to be highly accurate.  Indeed the real challenge would be to find predictive models on data that is more "noisy" with participants who are not coached to perform the exercises in any particular way.  This is actually the premise of the study, that machine learning models can't scale to be able to make these sorts of predictions.  It would be interesting to collect the more noisy data and compare.
+
+## Appendix
+
+```{r clean, echo=TRUE, results='hide'}
+```
