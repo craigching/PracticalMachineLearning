@@ -115,9 +115,11 @@ trainRaw <- clean(trainRaw)
 
 ```
 
+After cleaning the data according to the above criteria, we have narrowed our features down to `r ncol(trainRaw)` relevant features.
+
 ## Model Selection
 
-We have narrowed our features down to `r ncol(trainRaw)` relevant features.  Our strategy for model selection is to split our training data into two sets, 70% for training our model and the other 30% for testing and reporting our expected out of sample error.  Finally we will apply our model to the validation set provided by download from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv which will be submitted for evaluation of our final model.
+Our strategy for model selection is to split our training data into two sets, 70% for training our model and the other 30% for testing and reporting our expected out of sample error.  Finally we will apply our model to the validation set provided by download from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv which will be submitted for evaluation of our final model.
 
 We will create two different machine learning algorithms, one based on random forests and the other based on boosting trees, and train them on the training set using 3-fold cross validation.  We will measure the accuracy and error for each algorithm using the held out test and compare the two resulting models.
 
@@ -217,7 +219,8 @@ getBoostingModel <- function(data) {
         mod <- readRDS("gbm1")
     } else {
         tuneGrid <- expand.grid(n.trees = seq(1,501,10), interaction.depth = 2:5, shrinkage = 0.1, n.minobsinnode = 10)
-        trControl <- trainControl(method = "repeatedcv", number = 3, repeats = 1, verboseIter = FALSE,returnResamp = "all")
+        # trControl <- trainControl(method = "repeatedcv", number = 3, repeats = 1, verboseIter = FALSE, returnResamp = "all")
+        trControl <- trainControl(method = "cv", number = 3)
         mod <- train(classe ~ ., data = data, method = "gbm", trControl = trControl, tuneGrid = tuneGrid)
 
         # Cache the model for subsequent runs
