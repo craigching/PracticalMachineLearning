@@ -16,6 +16,14 @@ library(randomForest)
 library(gbm)
 library(dplyr)
 library(ggplot2)
+
+figures <- c("Figure 1. \"Distribution of the classe variable\"",
+             "Figure 2. \"Method for cleaning the data\"",
+             "Figure 3. \"Random Forest model\"",
+             "Figure 4. \"Error in Random Forest model\"",
+             "Figure 5. \"Tree Boosting model\"",
+             "Figure 6. \"Error in Tree Boosting model\"")
+
 ```
 
 ## Executive Summary
@@ -34,7 +42,7 @@ This study undertakes a lesser studied aspect of physical activity, the study of
 - (Class D) lowering the dumbbell only halfway
 - (Class E) throwing the hips to the front
 
-The exercises were performed by six males between the ages of 20 and 28 years old.  The goal of this analysis is to use the data provided by the study to predict 20 outcomes for which we do not know the *classe* (A, B, C, D, or E).  The data for each *classe* value are distributed fairly uniformly as can be seen in Figure **TODO: FIGURE**, giving us confidence that we have enough data for each *classe* to ensure we at least won't have any bias due to not having enough data for a *classe* value.
+The exercises were performed by six males between the ages of 20 and 28 years old.  The goal of this analysis is to use the data provided by the study to predict 20 outcomes for which we do not know the *classe* (A, B, C, D, or E).  The data for each *classe* value are distributed fairly uniformly as can be seen in **`r figures[1]`**, giving us confidence that we have enough data for each *classe* to ensure we at least won't have any bias due to not having enough data for a *classe* value.
 
 ```{r get, echo=FALSE, results='hide', message=FALSE}
 download <- function(name) {
@@ -54,6 +62,7 @@ lapply(c("training", "testing"), download)
 
 trainRaw <- read.csv("training.csv", na.strings = c("NA", ""), stringsAsFactors = FALSE)
 
+# Build a data frame for the distribution of the classe variable
 df.summary <-
     group_by(trainRaw, classe) %>%
     summarize(counts = n())
@@ -69,16 +78,9 @@ df.counts <- as.data.frame(table(counts))
 
 ```
 
-```{r barplot, echo=FALSE, fig.width=6, fig.height=4, fig.cap="Figure 1. Counts for classe"}
-ggplot(data = df.summary, aes(x = classe, y = counts)) +
-    geom_bar(stat = "identity", color = "black", fill = "steelblue")
-```
-
-Figure 1. "Counts for *classe*"
-
 ## Feature Engineering
 
-The raw data consists of `r nfeatures` features and `r ncases` cases.  We note that the data frame is fairly sparse with `r df.counts[1,2]` features containing only `r df.counts[1,1]` values of `r ncases` cases.  We remove these features as their numbers are a small percentage of the overall cases and, as we will see, our predictive power is good without them.  We also remove some time-based features as well as the user name and the identity column as they shouldn't have any predictive value for a classification problem.  Our cleaning code can be reviewed in Figure **TODO: Provide this figure**
+The raw data consists of `r nfeatures` features and `r ncases` cases.  We note that the data frame is fairly sparse with `r df.counts[1,2]` features containing only `r df.counts[1,1]` values of `r ncases` cases.  We remove these features as their numbers are a small percentage of the overall cases and, as we will see, our predictive power is good without them.  We also remove some time-based features as well as the user name and the identity column as they shouldn't have any predictive value for a classification problem.  Our cleaning code can be reviewed in **`r figures[2]`.**
 
 ```{r clean, echo=FALSE, results='hide', message=FALSE}
 clean <- function(data, include = TRUE) {
@@ -144,7 +146,6 @@ test <- l$test
 ```
 
 ```{r results, echo=FALSE}
-# ```{r results, echo=FALSE, results='hide', message=FALSE}
 
 analyzeModel <- function(model, test) {
 
@@ -163,22 +164,18 @@ analyzeModel <- function(model, test) {
 
 #### Random Forest Performance
 
-For the random forest model, we use the caret package to train using "rf" for the method.  How we built the model can be seen in Figure **TODO: Provide figure**
+For the random forest model, we use the caret package to train using "rf" for the method.  How we built the model can be seen in **`r figures[3]`.**
 
 ```{r rf, echo=FALSE, results='hide', message=FALSE}
 getRandomForestModel <- function(data) {
 
+    # Use the cached model if available
     if (file.exists("rf1")) {
         mod <- readRDS("rf1")
     } else {
         trControl <- trainControl(method = "cv", number = 3)
-
-        ptm <- proc.time()
         mod <- train(classe ~ ., method = "rf", data = data, trControl = trControl, do.trace = FALSE, ntree = 500)
-        t1 <- proc.time() - ptm
-
-        print(t1)
-        
+        # Cache the model for subsequent runs
         saveRDS(mod, file = "rf1")
     }
 
@@ -188,7 +185,6 @@ getRandomForestModel <- function(data) {
 set.seed(88888888)
 
 rf.model <- getRandomForestModel(train)
-plot(rf.model$finalModel)
 
 l <- analyzeModel(rf.model, test)
 
@@ -200,7 +196,7 @@ rf.error <- 100 - rf.accuracy
 
 ```
 
-The random forest model we built has an accuracy of `r rf.accuracy`% and an out-of-sample error of `r rf.error`%.  The accuracy and out-of-sample error were calculated on the held out test set.  This model has a very high accuracy and should perform well on our validation set for submission.  The confusion matrix for our random forest model generated on the test data set:
+The random forest model we built has an accuracy of `r rf.accuracy`% and an out-of-sample error of `r rf.error`%.  The accuracy and out-of-sample error were calculated on the held out test set.  This model has a very high accuracy and should perform well on our validation set for submission.  See **`r figures[4]`** for a breakdown in caret's model selection process for the random forest model we built.  The confusion matrix for our random forest model generated on the test data set:
 
 ```{r echo=FALSE}
 
@@ -210,27 +206,21 @@ confusionMatrix(test$classe, rf.pred)
 
 #### Tree Boosting Performance
 
-For the tree boosting model, we use the caret package to train using "gbm" for the method.  How we built the model can be seen in Figure **TODO: Provide figure**
+For the tree boosting model, we use the caret package to train using "gbm" for the method.  How we built the model can be seen in **`r figures[5]`.**
 
 ```{r boosting, echo=FALSE, results='hide', message=FALSE}
 
 getBoostingModel <- function(data) {
 
-    # Worth checking this out:
-    # https://www.kaggle.com/c/forest-cover-type-prediction/forums/t/10562/caret-gbm-cross-validation-takes-an-extremely-long-time-to-complete
-
+    # Use the cached model if available
     if (file.exists("gbm1")) {
         mod <- readRDS("gbm1")
     } else {
-        ptm <- proc.time()
-        myTuneGrid <- expand.grid(n.trees = seq(1,501,10), interaction.depth = 2:5,shrinkage = 0.1, n.minobsinnode = 10)
-        fitControl <- trainControl(method = "repeatedcv", number = 3, repeats = 1, verboseIter = FALSE,returnResamp = "all")
-        mod <- train(classe ~ .,data = data,method = "gbm",trControl = fitControl,tuneGrid = myTuneGrid)
-        # mod <- train(classe ~ ., method = "gbm", data = data, verbose = FALSE)
-        t1 <- proc.time() - ptm
+        tuneGrid <- expand.grid(n.trees = seq(1,501,10), interaction.depth = 2:5, shrinkage = 0.1, n.minobsinnode = 10)
+        trControl <- trainControl(method = "repeatedcv", number = 3, repeats = 1, verboseIter = FALSE,returnResamp = "all")
+        mod <- train(classe ~ ., data = data, method = "gbm", trControl = trControl, tuneGrid = tuneGrid)
 
-        print(t1)
-        
+        # Cache the model for subsequent runs
         saveRDS(mod, file = "gbm1")
     }
     mod
@@ -239,7 +229,6 @@ getBoostingModel <- function(data) {
 set.seed(88888888)
 
 gbm.model <- getBoostingModel(train)
-plot(gbm.model)
 l <- analyzeModel(gbm.model, test)
 
 gbm.pred <- l$test.pred
@@ -250,7 +239,7 @@ gbm.error <- 100 - gbm.accuracy
 
 ```
 
-The tree boosting model we built has an accuracy of `r gbm.accuracy`% and an out-of-sample error of `r gbm.error`%.  The accuracy and out-of-sample error were calculated on the held out test set.  This model has a very high accuracy and should perform well on our validation set for submission.  The confusion matrix for our tree boosting model generated on the test data set:
+The tree boosting model we built has an accuracy of `r gbm.accuracy`% and an out-of-sample error of `r gbm.error`%.  The accuracy and out-of-sample error were calculated on the held out test set.  This model has a very high accuracy and should perform well on our validation set for submission.  See **`r figures[6]`** for a breakdown in caret's model selection process for the tree boosting model we built.   The confusion matrix for our tree boosting model generated on the test data set:
 
 ```{r echo=FALSE}
 
@@ -277,7 +266,7 @@ pml_write_files(rf.final.pred)
 model.matches <- sum(rf.final.pred == gbm.final.pred)
 ```
 
-Comparing the two models, we find that the models agree with the final validation set `r model.matches` times, they are in complete agreement with each other.  The final predicted values that we submitted are:
+Comparing the two models, we find that the models agree with each other when predicting on the final validation set `r model.matches` times, they are in complete agreement with each other.  The final predicted values that we submitted are:
 
 ```{r echo=FALSE}
 print(rf.final.pred)
@@ -291,5 +280,40 @@ Given the methodology of the experiment, that weight trainers supervised partici
 
 ## Appendix
 
+Following are all the figures for this document.  Source to reproduce this document and all the analysis herein can be found at https://github.com/craigching/PracticalMachineLearning
+
+```{r barplot, echo=FALSE, results='hide', message=FALSE, fig.width=6, fig.height=4, fig.cap="Distribution of classe variable"}
+ggplot(data = df.summary, aes(x = classe, y = counts)) +
+    geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+    ggtitle("Distribution of the classe variable") +
+    theme_bw()
+```
+
+`r figures[1]`.
+
 ```{r clean, echo=TRUE, results='hide'}
 ```
+
+`r figures[2]`.
+
+```{r rf, echo=TRUE, results='hide'}
+```
+
+`r figures[3]`.
+
+```{r rf_plot, echo=FALSE}
+plot(rf.model$finalModel, main = "Random Forest Error for Number of Trees")
+```
+
+`r figures[4]`.
+
+```{r boosting, echo=TRUE, results='hide'}
+```
+
+`r figures[5]`.
+
+```{r boosting_plot, echo=FALSE}
+plot(gbm.model, main = "Accuracy of Tree Boosting Model over Iterations")
+```
+
+`r figures[6]`.
